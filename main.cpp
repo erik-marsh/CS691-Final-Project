@@ -43,7 +43,11 @@ const std::vector<std::string> WhitespaceTokenizer(const std::string& line);
 
 int main()
 {
-    GetInputConfig(CONFIG_FILENAME);
+    InputConfig config = GetInputConfig(CONFIG_FILENAME);
+    std::cout << config.gridCellsX << " " << config.gridCellsY << " " << config.gridCellSizeX << " " << config.gridCellSizeY << "\n";
+    std::cout << config.timestep << " " << config.totalRuntime << "\n";
+    std::cout << config.smokeGenLocationX << " " << config.smokeGenLocationY << " " << config.smokeGenValue << "\n";
+    std::cout << config.advectionConstant << " " << config.eddyDiffusivityX << " " << config.eddyDiffusivityY << "\n";
     return 0;
 }
 
@@ -56,11 +60,8 @@ const InputConfig GetInputConfig(const std::string& inputFilename)
 
     while (std::getline(file, line))
     {
-        // if (line[0] == COMMENT_INDICATOR)
-        //     continue;
-        
-        auto tokens = WhitespaceTokenizer(line);
         // not-totally-expected behavior: strings starting in whitespace will return an empty string for the first token
+        auto tokens = WhitespaceTokenizer(line);
 
         // this should never be the case, but I'll write it just in case
         if (tokens.size() == 0) continue;
@@ -82,7 +83,7 @@ const InputConfig GetInputConfig(const std::string& inputFilename)
         std::string value1 = "";
 
         // parse content lines
-        // anything that isn't valid should be ignored
+        // anything that isn't valid should theoretically be ignored
         if (*(tokens[0].end() - 1) == NAME_VALUE_DELIMITER)
         {
             if (tokens.size() < 2) continue;
@@ -106,6 +107,45 @@ const InputConfig GetInputConfig(const std::string& inputFilename)
                 std::cout << "[first value must be]: " << value0 << std::endl;
             }
         }
+
+        // parse keys in a dreadful if/else chain
+        if (key == KEY_GRID_CELLS)
+        {
+            config.gridCellsX = std::stoi(value0);
+            config.gridCellsY = std::stoi(value1);
+        }
+        else if (key == KEY_GRID_SIZE)
+        {
+            config.gridCellSizeX = std::stoi(value0);
+            config.gridCellSizeY = std::stoi(value1);
+        }
+        else if (key == KEY_TIMESTEP)
+        {
+            config.timestep = std::stof(value0);
+        }
+        else if (key == KEY_RUNTIME)
+        {
+            config.totalRuntime = std::stof(value0);
+        }
+        else if (key == KEY_SMOKEGEN_LOC)
+        {
+            config.smokeGenLocationX = std::stoi(value0);
+            config.smokeGenLocationY = std::stoi(value1);
+        }
+        else if (key == KEY_SMOKEGEN_VAL)
+        {
+            config.smokeGenValue = std::stof(value0);
+        }
+        else if (key == KEY_ADVECTION)
+        {
+            config.advectionConstant = std::stof(value0);
+        }
+        else if (key == KEY_EDDY)
+        {
+            config.eddyDiffusivityX = std::stof(value0);
+            config.eddyDiffusivityY = std::stof(value1);
+        }
+        // else continue
     }
 
     return config;
