@@ -6,7 +6,7 @@
 
 const std::string CONFIG_FILENAME = "input.conf";
 
-constexpr char NAME_VALUE_DELIMITER = ':';
+constexpr char KEY_VALUE_DELIMITER = ':';
 constexpr char TUPLE_DELIMITER = ',';
 constexpr char COMMENT_INDICATOR = '#';
 
@@ -44,10 +44,23 @@ const std::vector<std::string> WhitespaceTokenizer(const std::string& line);
 int main()
 {
     InputConfig config = GetInputConfig(CONFIG_FILENAME);
-    std::cout << config.gridCellsX << " " << config.gridCellsY << " " << config.gridCellSizeX << " " << config.gridCellSizeY << "\n";
-    std::cout << config.timestep << " " << config.totalRuntime << "\n";
-    std::cout << config.smokeGenLocationX << " " << config.smokeGenLocationY << " " << config.smokeGenValue << "\n";
-    std::cout << config.advectionConstant << " " << config.eddyDiffusivityX << " " << config.eddyDiffusivityY << "\n";
+
+    // there are a few coefficients that can be caluclated ahead of time
+    // the coefficient of the "advection term"
+    const float advectionCoefficient =
+        (-1.0f * config.advectionConstant * config.timestep) /
+        (2 * config.gridCellSizeX);
+    
+    // the coefficient of the "X eddy term"
+    const float eddyCoefficentX = 
+        (config.eddyDiffusivityX * config.timestep) / 
+        (config.gridCellSizeX * config.gridCellSizeX);
+    
+    // and the coefficient of the "Y eddy term"
+    const float eddyCoefficientY = 
+        (config.eddyDiffusivityY * config.timestep) / 
+        (config.gridCellSizeY * config.gridCellSizeY);
+    
     return 0;
 }
 
@@ -84,7 +97,7 @@ const InputConfig GetInputConfig(const std::string& inputFilename)
 
         // parse content lines
         // anything that isn't valid should theoretically be ignored
-        if (*(tokens[0].end() - 1) == NAME_VALUE_DELIMITER)
+        if (*(tokens[0].end() - 1) == KEY_VALUE_DELIMITER)
         {
             if (tokens.size() < 2) continue;
 
