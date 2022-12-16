@@ -1,14 +1,14 @@
-CXX = g++.exe
+CXX = hipcc
 CXX_FLAGS = -std=c++17
 
-PROGNAME = smoke.exe
+PROGNAME = smoke
 
 .PHONY: clean all
 
 all: $(PROGNAME)
 
 clean:
-	powershell.exe "Remove-Item $(PROGNAME); $$null"
+	rm $(PROGNAME)
 
 $(PROGNAME): main.cpp
 	$(CXX) $(CXX_FLAGS) $< -o $@
