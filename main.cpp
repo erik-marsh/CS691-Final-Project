@@ -4,6 +4,12 @@
 #include <string>
 #include <vector>
 
+#include <hip/hip_runtime.h>
+
+///////////////////////////////////////////////////////////////////////////////
+// Constants
+///////////////////////////////////////////////////////////////////////////////
+
 const std::string CONFIG_FILENAME = "input.conf";
 
 constexpr char KEY_VALUE_DELIMITER = ':';
@@ -18,6 +24,11 @@ const std::string KEY_SMOKEGEN_LOC = "SmokeGeneratorLocation";
 const std::string KEY_SMOKEGEN_VAL = "SmokeGeneratorValue";
 const std::string KEY_ADVECTION = "AdvectionConstant";
 const std::string KEY_EDDY = "EddyDiffusivities";
+
+
+///////////////////////////////////////////////////////////////////////////////
+// Structs
+///////////////////////////////////////////////////////////////////////////////
 
 struct InputConfig
 {
@@ -37,6 +48,23 @@ struct InputConfig
     float eddyDiffusivityX;
     float eddyDiffusivityY;
 };
+
+
+///////////////////////////////////////////////////////////////////////////////
+// Macros
+///////////////////////////////////////////////////////////////////////////////
+
+// handy error handler I yoinked from a CUDA textbook
+void HandleError(const hipError_t err, const char *file, const int line)
+{
+    if (err == hipSuccess) return;
+
+    std::cout << "Error encountered in file " << file << " at line " << line << ":\n";
+    std::cout << "    " << hipGetErrorName(err) << ": " << hipGetErrorString(err) << "\n";
+}
+
+#define HANDLE_ERROR(err) HandleError(err, __FILE__, __LINE__);
+
 
 const InputConfig GetInputConfig(const std::string& inputFilename);
 const std::vector<std::string> WhitespaceTokenizer(const std::string& line);
@@ -60,7 +88,26 @@ int main()
     const float eddyCoefficientY = 
         (config.eddyDiffusivityY * config.timestep) / 
         (config.gridCellSizeY * config.gridCellSizeY);
-    
+
+    // TODO: generate CPU buffers (for output purposes)
+
+    // generate GPU buffers
+    const int gridBufferSize = config.gridCellsX * config.gridCellsY;
+    std::cout << "Using gridBufferSize of " << gridBufferSize << "\n";
+
+    float *d_gridA;
+    float *d_gridB;
+    HANDLE_ERROR(hipMalloc(&d_gridA, gridBufferSize * sizeof(float)));
+    HANDLE_ERROR(hipMalloc(&d_gridB, gridBufferSize * sizeof(float)));
+
+    float t = 0.0f;
+    while (t <= config.totalRuntime)
+    {
+        std::cout << "Timestep: " << t << "\n";
+        // do stuff
+        t += config.timestep;
+    }
+
     return 0;
 }
 
