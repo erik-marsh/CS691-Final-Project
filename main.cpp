@@ -241,9 +241,12 @@ __global__ void IterateSimulation(float *destGrid, float *srcGrid, const int gri
     int cellIdxAbove = ((y + 1) * gridDimX) + x;
     int cellIdxBelow = ((y - 1) * gridDimX) + x;
 
-    float rawValue = srcGrid[cellIdx] +
-        advectionCoeff * (srcGrid[cellIdx + 1] - srcGrid[cellIdx - 1]);
-
+    float rawValue = (srcGrid[cellIdx]) +
+        (advectionCoeff * (srcGrid[cellIdx + 1] - srcGrid[cellIdx - 1])) +                          // Leelossy approx
+        (eddyCoeffX * (srcGrid[cellIdx + 1] - srcGrid[cellIdx - 1])) +                              // Leelossy approx
+        (eddyCoeffY * (srcGrid[cellIdxAbove] + srcGrid[cellIdxBelow] - (2 * srcGrid[cellIdx])));    // 2nd deriv. approx
+    
+    // negative concentration doesn't make much sense physically
     destGrid[cellIdx] = rawValue > 0.0f ? rawValue : 0.0f;
 }
 
