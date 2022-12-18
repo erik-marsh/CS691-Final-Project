@@ -6,6 +6,9 @@
 
 #include <hip/hip_runtime.h>
 
+#include "CImg.h"
+
+
 ///////////////////////////////////////////////////////////////////////////////
 // Constants
 ///////////////////////////////////////////////////////////////////////////////
@@ -111,6 +114,8 @@ int main()
 
     // generate CPU buffers (for output purposes)
     std::vector<float> cpuGrid(gridBufferSize, 0.0f);
+    cimg_library::CImg<uint16_t> outputImg(config.gridCellsX, config.gridCellsY, 1, 1, 0);
+    cimg_library::CImgDisplay outputImgDisp(outputImg, "out");
 
     // generate GPU buffers
     float *d_gridA;
@@ -179,17 +184,28 @@ int main()
 
         for (int j = config.gridCellsY - 1; j >= 0; j--)
         {
-            std::cout << "[ ";
+            //std::cout << "[ ";
             for (int i = 0; i < config.gridCellsX; i++)
             {
-                std::cout << cpuGrid[(j * config.gridCellsX) + i] << " ";
+                //std::cout << cpuGrid[(j * config.gridCellsX) + i] << " ";
+                float colorIntensity = cpuGrid[(j * config.gridCellsX) + i] / static_cast<float>(config.smokeGenValue);
+                if (colorIntensity > 1.0f)
+                    colorIntensity = 1.0f;
+                uint16_t intIntensity = colorIntensity * 65535;
+                outputImg(i, config.gridCellsY - j - 1, 0, 0) = intIntensity;
             }
-            std::cout << "]\n";
+            //std::cout << "]\n";
         }
-        std::cout << "(Grid " << gridNames[currentGrid] << ", t=" << t + config.timestep << ")" << std::endl;
+        std::cout << "t=" << t + config.timestep << std::endl;
 
         // pause for debug visualizations
-        std::cin.ignore();
+        //std::cin.ignore();
+        //cimg_library::CImgDisplay outputImgDisp(outputImg, "out");
+        outputImgDisp.assign(outputImg, "out");
+        while (!outputImgDisp.is_keyENTER())
+        {
+            outputImgDisp.wait();
+        }
 
         // swap buffers
         CopyGrid<<<grid1D, block1D>>>(backGrid, frontGrid, gridBufferSize);
