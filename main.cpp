@@ -10,6 +10,8 @@
 // Constants
 ///////////////////////////////////////////////////////////////////////////////
 
+constexpr int BLOCK_SIZE = 32;
+
 const std::string CONFIG_FILENAME = "input.conf";
 
 constexpr char KEY_VALUE_DELIMITER = ':';
@@ -66,8 +68,21 @@ void HandleError(const hipError_t err, const char *file, const int line)
 #define HANDLE_ERROR(err) HandleError(err, __FILE__, __LINE__);
 
 
+///////////////////////////////////////////////////////////////////////////////
+// Helper function declarations
+///////////////////////////////////////////////////////////////////////////////
+//
 const InputConfig GetInputConfig(const std::string& inputFilename);
 const std::vector<std::string> WhitespaceTokenizer(const std::string& line);
+
+
+///////////////////////////////////////////////////////////////////////////////
+// Kernel declarations
+///////////////////////////////////////////////////////////////////////////////
+
+__global__ void CopyGrid(float *oldGrid, float *newGrid, const int bufferSize);
+__global__ void ApplySmokeGenerator(float *grid, const int x, const int y, const float generatorValue, const int gridWidth);
+
 
 int main()
 {
@@ -89,26 +104,71 @@ int main()
         (config.eddyDiffusivityY * config.timestep) / 
         (config.gridCellSizeY * config.gridCellSizeY);
 
-    // TODO: generate CPU buffers (for output purposes)
-
-    // generate GPU buffers
     const int gridBufferSize = config.gridCellsX * config.gridCellsY;
     std::cout << "Using gridBufferSize of " << gridBufferSize << "\n";
 
+    // generate CPU buffers (for output purposes)
+    std::vector<float> cpuGrid(gridBufferSize, 0.0f);
+
+    // generate GPU buffers
     float *d_gridA;
     float *d_gridB;
     HANDLE_ERROR(hipMalloc(&d_gridA, gridBufferSize * sizeof(float)));
     HANDLE_ERROR(hipMalloc(&d_gridB, gridBufferSize * sizeof(float)));
 
+    // initialize all grid cells to having zero smoke concentration
+    HANDLE_ERROR(hipMemset(d_gridA, 0.0f, gridBufferSize * sizeof(float)));
+    HANDLE_ERROR(hipMemset(d_gridB, 0.0f, gridBufferSize * sizeof(float)));
+    
+    float *d_grids[2] = { d_gridA, d_gridB };
+    const char gridNames[2] = {'A', 'B'}; 
+    int currentGrid = 0;
     float t = 0.0f;
     while (t <= config.totalRuntime)
     {
-        std::cout << "Timestep: " << t << "\n";
-        // do stuff
+        // apply "initial" condition
+        // this is applied every cycle since we are modelling a point source of smoke
+        ApplySmokeGenerator<<<gridBufferSize / BLOCK_SIZE, BLOCK_SIZE>>>(
+            d_grids[currentGrid],
+            config.smokeGenLocationX,
+            config.smokeGenLocationY,
+            config.smokeGenValue,
+            config.gridCellsX);
+
+        // print grid for debug purposes
+        HANDLE_ERROR(hipMemcpy(cpuGrid.data(), d_grids[currentGrid],
+                               gridBufferSize * sizeof(float), hipMemcpyDeviceToHost));
+
+        for (int j = 0; j < config.gridCellsY; j++)
+        {
+            std::cout << "[ ";
+            for (int i = 0; i < config.gridCellsX; i++)
+            {
+                std::cout << cpuGrid[(j * config.gridCellsX) + i] << " ";
+            }
+            std::cout << "]\n";
+        }
+        std::cout << "(Grid " << gridNames[currentGrid] << ", t=" << t << ")" << std::endl;; 
+
+        // pause for debug visualizations
+        std::cin.ignore();
+
+        // swap buffers
+        currentGrid = (currentGrid + 1) % 2;
+
         t += config.timestep;
     }
 
     return 0;
+}
+
+
+__global__ void ApplySmokeGenerator(float *grid, const int x, const int y, const float generatorValue, const int gridWidth)
+{
+    if (blockIdx.x == 0 && threadIdx.x == 0)
+    {
+        grid[(y * gridWidth) + x] = generatorValue;
+    }
 }
 
 // simple, non-generalizable parser
