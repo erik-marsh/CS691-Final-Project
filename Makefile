@@ -1,5 +1,5 @@
 CXX = hipcc
-CXX_FLAGS = -std=c++17
+CXX_FLAGS = -std=c++17 -lX11 -lpthread
 
 PROGNAME = smoke
 
