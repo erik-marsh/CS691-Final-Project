@@ -36,8 +36,8 @@ struct InputConfig
 {
     int gridCellsX;
     int gridCellsY;
-    int gridCellSizeX;
-    int gridCellSizeY;
+    float gridCellSizeX;
+    float gridCellSizeY;
 
     float timestep;
     float totalRuntime;
@@ -80,8 +80,10 @@ const std::vector<std::string> WhitespaceTokenizer(const std::string& line);
 // Kernel declarations
 ///////////////////////////////////////////////////////////////////////////////
 
-__global__ void CopyGrid(float *oldGrid, float *newGrid, const int bufferSize);
+__global__ void CopyGrid(float *destGrid, float *srcGrid, const int bufferSize);
 __global__ void ApplySmokeGenerator(float *grid, const int x, const int y, const float generatorValue, const int gridWidth);
+__global__ void IterateSimulation(float *destGrid, float *srcGrid, const int gridDimX, const int gridDimY,
+                                  const float advectionCoeff, const float eddyCoeffX, const float eddyCoeffY);
 
 
 int main()
@@ -95,7 +97,7 @@ int main()
         (2 * config.gridCellSizeX);
     
     // the coefficient of the "X eddy term"
-    const float eddyCoefficentX = 
+    const float eddyCoefficientX = 
         (config.eddyDiffusivityX * config.timestep) / 
         (config.gridCellSizeX * config.gridCellSizeX);
     
@@ -119,27 +121,63 @@ int main()
     // initialize all grid cells to having zero smoke concentration
     HANDLE_ERROR(hipMemset(d_gridA, 0.0f, gridBufferSize * sizeof(float)));
     HANDLE_ERROR(hipMemset(d_gridB, 0.0f, gridBufferSize * sizeof(float)));
-    
+   
+    dim3 block1D(BLOCK_SIZE, 1, 1);
+    dim3 grid1D((gridBufferSize + (block1D.x - 1)) / block1D.x, 1, 1);
+
+    dim3 block2D(BLOCK_SIZE, BLOCK_SIZE, 1);
+    dim3 grid2D((config.gridCellsX + (block2D.x - 1)) / block2D.x,
+                (config.gridCellsY + (block2D.y - 1)) / block2D.y,
+                1);
+
+    // apply initial condiiton
+    // B will be the backbuffer in the first iteration of the loop,
+    // which is the buffer that we are pulling values from to caluclate the new (front) buffer
+    ApplySmokeGenerator<<<grid1D, block1D>>>(
+        d_gridB,
+        config.smokeGenLocationX,
+        config.smokeGenLocationY,
+        config.smokeGenValue,
+        config.gridCellsX);
+
     float *d_grids[2] = { d_gridA, d_gridB };
     const char gridNames[2] = {'A', 'B'}; 
     int currentGrid = 0;
     float t = 0.0f;
+
     while (t <= config.totalRuntime)
     {
-        // apply "initial" condition
+        // front grid is the (n+1)th timestep
+        // back grid is the nth timestep
+        float *frontGrid = currentGrid % 2 == 0 ? d_gridA : d_gridB;
+        float *backGrid  = currentGrid % 2 == 0 ? d_gridB : d_gridA;
+
+        // apply iteration of the function
+        IterateSimulation<<<grid2D, block2D>>>(
+            frontGrid,
+            backGrid,
+            config.gridCellsX,
+            config.gridCellsY,
+            advectionCoefficient,
+            eddyCoefficientX,
+            eddyCoefficientY);
+
+        // reapply "initial" condition
         // this is applied every cycle since we are modelling a point source of smoke
-        ApplySmokeGenerator<<<gridBufferSize / BLOCK_SIZE, BLOCK_SIZE>>>(
-            d_grids[currentGrid],
+        // that is - our source has a constant concentration value in time
+        ApplySmokeGenerator<<<grid1D, block1D>>>(
+            frontGrid,
             config.smokeGenLocationX,
             config.smokeGenLocationY,
             config.smokeGenValue,
             config.gridCellsX);
 
+
         // print grid for debug purposes
-        HANDLE_ERROR(hipMemcpy(cpuGrid.data(), d_grids[currentGrid],
+        HANDLE_ERROR(hipMemcpy(cpuGrid.data(), frontGrid,
                                gridBufferSize * sizeof(float), hipMemcpyDeviceToHost));
 
-        for (int j = 0; j < config.gridCellsY; j++)
+        for (int j = config.gridCellsY - 1; j >= 0; j--)
         {
             std::cout << "[ ";
             for (int i = 0; i < config.gridCellsX; i++)
@@ -148,12 +186,13 @@ int main()
             }
             std::cout << "]\n";
         }
-        std::cout << "(Grid " << gridNames[currentGrid] << ", t=" << t << ")" << std::endl;; 
+        std::cout << "(Grid " << gridNames[currentGrid] << ", t=" << t + config.timestep << ")" << std::endl;
 
         // pause for debug visualizations
         std::cin.ignore();
 
         // swap buffers
+        CopyGrid<<<grid1D, block1D>>>(backGrid, frontGrid, gridBufferSize);
         currentGrid = (currentGrid + 1) % 2;
 
         t += config.timestep;
@@ -162,6 +201,51 @@ int main()
     return 0;
 }
 
+// 1D operation
+__global__ void CopyGrid(float *destGrid, float *srcGrid, const int bufferSize)
+{
+    int tid = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+    if (tid < bufferSize)
+    {
+        destGrid[tid] = srcGrid[tid];
+    }
+}
+
+
+// note that our gridding scheme is
+// x horizontal, y vertical such that the indices are...
+// (gridDimY - 1)
+// ...
+// 2
+// 1
+// 0 1 2 ... (gridDimX - 1)
+// so just as you would expect!
+__global__ void IterateSimulation(float *destGrid, float *srcGrid, const int gridDimX, const int gridDimY,
+                                  const float advectionCoeff, const float eddyCoeffX, const float eddyCoeffY)
+{
+    // function should be called with blocks of 32x32, for now
+    int x = (blockIdx.x * blockDim.x) + threadIdx.x;
+    int y = (blockIdx.y * blockDim.y) + threadIdx.y;
+
+    // don't handle values outside the grid
+    if (x >= gridDimX || y >= gridDimY)
+        return;
+
+    // boundary conditions must be handled differently
+    if (x == 0 || x == gridDimX - 1 || y == 0 || y == gridDimY - 1)
+        return;
+
+    // TODO currently we only handle advection
+    int cellIdx = (y * gridDimX) + x;
+    int cellIdxAbove = ((y + 1) * gridDimX) + x;
+    int cellIdxBelow = ((y - 1) * gridDimX) + x;
+
+    float rawValue = srcGrid[cellIdx] +
+        advectionCoeff * (srcGrid[cellIdx + 1] - srcGrid[cellIdx - 1]);
+
+    destGrid[cellIdx] = rawValue > 0.0f ? rawValue : 0.0f;
+}
 
 __global__ void ApplySmokeGenerator(float *grid, const int x, const int y, const float generatorValue, const int gridWidth)
 {
@@ -170,6 +254,8 @@ __global__ void ApplySmokeGenerator(float *grid, const int x, const int y, const
         grid[(y * gridWidth) + x] = generatorValue;
     }
 }
+
+
 
 // simple, non-generalizable parser
 const InputConfig GetInputConfig(const std::string& inputFilename)
@@ -236,8 +322,8 @@ const InputConfig GetInputConfig(const std::string& inputFilename)
         }
         else if (key == KEY_GRID_SIZE)
         {
-            config.gridCellSizeX = std::stoi(value0);
-            config.gridCellSizeY = std::stoi(value1);
+            config.gridCellSizeX = std::stof(value0);
+            config.gridCellSizeY = std::stof(value1);
         }
         else if (key == KEY_TIMESTEP)
         {
