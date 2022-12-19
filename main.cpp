@@ -1,6 +1,6 @@
-#include <fstream>
+#include <fstream>  // config file reading
 #include <iostream>
-#include <regex>
+#include <regex>    // config file reading
 #include <string>
 #include <vector>
 
@@ -84,9 +84,12 @@ const std::vector<std::string> WhitespaceTokenizer(const std::string& line);
 ///////////////////////////////////////////////////////////////////////////////
 
 __global__ void CopyGrid(float *destGrid, float *srcGrid, const int bufferSize);
+__global__ void Initialize(float *grid, const int bufferSize, const float value);
 __global__ void ApplySmokeGenerator(float *grid, const int x, const int y, const float generatorValue, const int gridWidth);
 __global__ void IterateSimulation(float *destGrid, float *srcGrid, const int gridDimX, const int gridDimY,
                                   const float advectionCoeff, const float eddyCoeffX, const float eddyCoeffY);
+__global__ void IterateSimulationBoundary(float *destGrid, float *srcGrid, const int gridDimX, const int gridDimY,
+                                          const float advectionCoeff, const float eddyCoeffX, const float eddyCoeffY);
 
 
 int main()
@@ -124,9 +127,9 @@ int main()
     HANDLE_ERROR(hipMalloc(&d_gridB, gridBufferSize * sizeof(float)));
 
     // initialize all grid cells to having zero smoke concentration
-    HANDLE_ERROR(hipMemset(d_gridA, 0.0f, gridBufferSize * sizeof(float)));
-    HANDLE_ERROR(hipMemset(d_gridB, 0.0f, gridBufferSize * sizeof(float)));
-   
+    HANDLE_ERROR(hipMemset(d_gridA, 0, gridBufferSize * sizeof(float)));
+    HANDLE_ERROR(hipMemset(d_gridB, 0, gridBufferSize * sizeof(float)));
+
     dim3 block1D(BLOCK_SIZE, 1, 1);
     dim3 grid1D((gridBufferSize + (block1D.x - 1)) / block1D.x, 1, 1);
 
@@ -134,6 +137,9 @@ int main()
     dim3 grid2D((config.gridCellsX + (block2D.x - 1)) / block2D.x,
                 (config.gridCellsY + (block2D.y - 1)) / block2D.y,
                 1);
+   
+    //Initialize<<<grid1D, block1D>>>(d_gridA, gridBufferSize, 100.0f);
+    //Initialize<<<grid1D, block1D>>>(d_gridB, gridBufferSize, 100.0f);
 
     // apply initial condiiton
     // B will be the backbuffer in the first iteration of the loop,
@@ -158,7 +164,7 @@ int main()
         float *backGrid  = currentGrid % 2 == 0 ? d_gridB : d_gridA;
 
         // apply iteration of the function
-        IterateSimulation<<<grid2D, block2D>>>(
+        IterateSimulationBoundary<<<grid2D, block2D>>>(
             frontGrid,
             backGrid,
             config.gridCellsX,
@@ -178,7 +184,9 @@ int main()
             config.gridCellsX);
 
 
-        // print grid for debug purposes
+        // print grid for debug purposes every 10th iteration
+        if ((int) t % 10 == 0 && (t - ((int) t)) <= 0.1f)
+        {
         HANDLE_ERROR(hipMemcpy(cpuGrid.data(), frontGrid,
                                gridBufferSize * sizeof(float), hipMemcpyDeviceToHost));
 
@@ -198,13 +206,9 @@ int main()
         }
         std::cout << "t=" << t + config.timestep << std::endl;
 
-        // pause for debug visualizations
-        //std::cin.ignore();
-        //cimg_library::CImgDisplay outputImgDisp(outputImg, "out");
+        // debug visualization
         outputImgDisp.assign(outputImg, "out");
-        while (!outputImgDisp.is_keyENTER())
-        {
-            outputImgDisp.wait();
+        outputImgDisp.wait(200);
         }
 
         // swap buffers
@@ -228,6 +232,14 @@ __global__ void CopyGrid(float *destGrid, float *srcGrid, const int bufferSize)
     }
 }
 
+__global__ void Initialize(float *grid, const int bufferSize, const float value)
+{
+    int tid = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+    if (tid >= bufferSize) return;
+
+    grid[tid] = value;
+}
 
 // note that our gridding scheme is
 // x horizontal, y vertical such that the indices are...
@@ -252,7 +264,6 @@ __global__ void IterateSimulation(float *destGrid, float *srcGrid, const int gri
     if (x == 0 || x == gridDimX - 1 || y == 0 || y == gridDimY - 1)
         return;
 
-    // TODO currently we only handle advection
     int cellIdx = (y * gridDimX) + x;
     int cellIdxAbove = ((y + 1) * gridDimX) + x;
     int cellIdxBelow = ((y - 1) * gridDimX) + x;
@@ -262,6 +273,67 @@ __global__ void IterateSimulation(float *destGrid, float *srcGrid, const int gri
         (eddyCoeffX * (srcGrid[cellIdx + 1] - srcGrid[cellIdx - 1])) +                              // Leelossy approx
         (eddyCoeffY * (srcGrid[cellIdxAbove] + srcGrid[cellIdxBelow] - (2 * srcGrid[cellIdx])));    // 2nd deriv. approx
     
+    // negative concentration doesn't make much sense physically
+    destGrid[cellIdx] = rawValue > 0.0f ? rawValue : 0.0f;
+}
+
+__global__ void IterateSimulationBoundary(float *destGrid, float *srcGrid, const int gridDimX, const int gridDimY,
+                                          const float advectionCoeff, const float eddyCoeffX, const float eddyCoeffY)
+{
+    int x = (blockIdx.x * blockDim.x) + threadIdx.x;
+    int y = (blockIdx.y * blockDim.y) + threadIdx.y;
+
+    // don't handle values outside the grid
+    if (x >= gridDimX || y >= gridDimY)
+        return;
+
+    int cellIdx = (y * gridDimX) + x;
+    int cellIdxRight = (y * gridDimX) + x + 1;
+    int cellIdxLeft  = (y * gridDimX) + x - 1;
+    int cellIdxAbove = ((y + 1) * gridDimX) + x;
+    int cellIdxBelow = ((y - 1) * gridDimX) + x;
+
+    // fill in cells that would be out of bounds with zero
+    float cellValue = srcGrid[cellIdx];
+    float cellValueRight = 0.0f;
+    float cellValueLeft  = 0.0f;
+    float cellValueAbove = 0.0f;
+    float cellValueBelow = 0.0f;
+
+    if (x == 0)
+    {
+        cellValueRight = srcGrid[cellIdxRight];
+    }
+    else if (x == gridDimX - 1)
+    {
+        cellValueLeft = srcGrid[cellIdxLeft];
+    }
+    else
+    {
+        cellValueRight = srcGrid[cellIdxRight];
+        cellValueLeft = srcGrid[cellIdxLeft];
+    }
+    
+    if (y == 0)
+    {
+        cellValueAbove = srcGrid[cellIdxAbove];
+    }
+    else if (y == gridDimY - 1)
+    {
+        cellValueBelow = srcGrid[cellIdxBelow];
+    }
+    else
+    {
+        cellValueBelow = srcGrid[cellIdxBelow];
+        cellValueAbove = srcGrid[cellIdxAbove];
+    }
+    
+    float rawValue = (cellValue) +
+        (advectionCoeff * (cellValueRight - cellValueLeft)) +               // Leelossy approx
+        (eddyCoeffX * (cellValueRight - cellValueLeft)) +                   // Leelossy approx
+        //(eddyCoeffX * (cellValueRight + cellValueLeft - (2 * cellValue))) + // 2nd deriv. approx
+        (eddyCoeffY * (cellValueAbove + cellValueBelow - (2 * cellValue))); // 2nd deriv. approx
+
     // negative concentration doesn't make much sense physically
     destGrid[cellIdx] = rawValue > 0.0f ? rawValue : 0.0f;
 }
