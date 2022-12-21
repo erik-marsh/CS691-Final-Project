@@ -16,6 +16,8 @@
 constexpr int BLOCK_SIZE = 32;
 
 const std::string CONFIG_FILENAME = "input.conf";
+const std::string OUTPUT_DIR = "out/";
+const std::string LOG_FILE_NAME = "log.txt";
 
 constexpr char KEY_VALUE_DELIMITER = ':';
 constexpr char TUPLE_DELIMITER = ',';
@@ -94,6 +96,8 @@ __global__ void IterateSimulation(float *destGrid, float *srcGrid, const int gri
 
 int main()
 {
+    std::ofstream logfile(OUTPUT_DIR + LOG_FILE_NAME);
+
     InputConfig config = GetInputConfig(CONFIG_FILENAME);
 
     // there are a few coefficients that can be caluclated ahead of time
@@ -120,7 +124,7 @@ int main()
 
     // generate CPU buffers (for output purposes)
     std::vector<float> cpuGrid(gridBufferSize, 0.0f);
-    cimg_library::CImg<uint16_t> outputImg(config.gridCellsX, config.gridCellsY, 1, 1, 0);
+    cimg_library::CImg<uint8_t> outputImg(config.gridCellsX, config.gridCellsY, 1, 1, 0);
     cimg_library::CImgDisplay outputImgDisp(outputImg, "out");
 
     // generate GPU buffers
@@ -202,16 +206,26 @@ int main()
                     float colorIntensity = cpuGrid[(j * config.gridCellsX) + i] / static_cast<float>(config.smokeGenValue);
                     if (colorIntensity > 1.0f)
                         colorIntensity = 1.0f;
-                    uint16_t intIntensity = colorIntensity * 65535;
+                    uint8_t intIntensity = colorIntensity * 255;
                     outputImg(i, config.gridCellsY - j - 1, 0, 0) = intIntensity;
                 }
             }
-            std::cout << "t=" << t << std::endl;
-            std::cout << "sampleRate=" << config.sampleRate << std::endl;
+            std::cout << "t=" << t << "sampleRate=" << config.sampleRate << std::endl;
+            logfile << "t=" << t << "sampleRate=" << config.sampleRate << std::endl;
 
-            // debug visualization
-            outputImgDisp.assign(outputImg, "out");
-            outputImgDisp.wait(200);
+            // write image to file
+            std::string imgFilename = OUTPUT_DIR;
+            imgFilename += "t";
+            imgFilename += std::to_string(t);
+            imgFilename += ".bmp";
+            outputImg.save(imgFilename.c_str());
+
+            // show image on screen
+            std::string windowName = "t=";
+            windowName += std::to_string(t);
+
+            outputImgDisp.assign(outputImg, windowName.c_str());
+            outputImgDisp.wait(200); // show each image for 200ms
         }
 
         // swap buffers

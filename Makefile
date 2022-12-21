@@ -9,6 +9,8 @@ all: $(PROGNAME)
 
 clean:
 	rm $(PROGNAME)
+	rm -rf out/
 
 $(PROGNAME): main.cpp
 	$(CXX) $(CXX_FLAGS) $< -o $@
+	mkdir -p out
