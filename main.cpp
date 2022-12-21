@@ -87,8 +87,6 @@ __global__ void CopyGrid(float *destGrid, float *srcGrid, const int bufferSize);
 __global__ void Initialize(float *grid, const int bufferSize, const float value);
 __global__ void ApplySmokeGenerator(float *grid, const int x, const int y, const float generatorValue, const int gridWidth);
 __global__ void IterateSimulation(float *destGrid, float *srcGrid, const int gridDimX, const int gridDimY,
-                                  const float advectionCoeff, const float eddyCoeffX, const float eddyCoeffY);
-__global__ void IterateSimulationBoundary(float *destGrid, float *srcGrid, const int gridDimX, const int gridDimY,
                                           const float advectionAndEddyXCoeff, const float eddyCoeffY);
 
 
@@ -167,7 +165,7 @@ int main()
         float *backGrid  = currentGrid % 2 == 0 ? d_gridB : d_gridA;
 
         // apply iteration of the function
-        IterateSimulationBoundary<<<grid2D, block2D>>>(
+        IterateSimulation<<<grid2D, block2D>>>(
             frontGrid,
             backGrid,
             config.gridCellsX,
@@ -249,34 +247,6 @@ __global__ void Initialize(float *grid, const int bufferSize, const float value)
 // 0 1 2 ... (gridDimX - 1)
 // so just as you would expect!
 __global__ void IterateSimulation(float *destGrid, float *srcGrid, const int gridDimX, const int gridDimY,
-                                  const float advectionCoeff, const float eddyCoeffX, const float eddyCoeffY)
-{
-    // function should be called with blocks of 32x32, for now
-    int x = (blockIdx.x * blockDim.x) + threadIdx.x;
-    int y = (blockIdx.y * blockDim.y) + threadIdx.y;
-
-    // don't handle values outside the grid
-    if (x >= gridDimX || y >= gridDimY)
-        return;
-
-    // boundary conditions must be handled differently
-    if (x == 0 || x == gridDimX - 1 || y == 0 || y == gridDimY - 1)
-        return;
-
-    int cellIdx = (y * gridDimX) + x;
-    int cellIdxAbove = ((y + 1) * gridDimX) + x;
-    int cellIdxBelow = ((y - 1) * gridDimX) + x;
-
-    float rawValue = (srcGrid[cellIdx]) +
-        (advectionCoeff * (srcGrid[cellIdx + 1] - srcGrid[cellIdx - 1])) +                          // Leelossy approx
-        (eddyCoeffX * (srcGrid[cellIdx + 1] - srcGrid[cellIdx - 1])) +                              // Leelossy approx
-        (eddyCoeffY * (srcGrid[cellIdxAbove] + srcGrid[cellIdxBelow] - (2 * srcGrid[cellIdx])));    // 2nd deriv. approx
-    
-    // negative concentration doesn't make much sense physically
-    destGrid[cellIdx] = rawValue > 0.0f ? rawValue : 0.0f;
-}
-
-__global__ void IterateSimulationBoundary(float *destGrid, float *srcGrid, const int gridDimX, const int gridDimY,
                                           const float advectionAndEddyXCoeff, const float eddyCoeffY)
 {
     int x = (blockIdx.x * blockDim.x) + threadIdx.x;
