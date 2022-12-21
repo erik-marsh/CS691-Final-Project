@@ -24,6 +24,7 @@ constexpr char COMMENT_INDICATOR = '#';
 const std::string KEY_GRID_CELLS = "NumGridCells";
 const std::string KEY_GRID_SIZE = "GridCellSize";
 const std::string KEY_TIMESTEP = "Timestep";
+const std::string KEY_SAMPLE_RATE = "SampleRate";
 const std::string KEY_RUNTIME = "TotalRuntime";
 const std::string KEY_SMOKEGEN_LOC = "SmokeGeneratorLocation";
 const std::string KEY_SMOKEGEN_VAL = "SmokeGeneratorValue";
@@ -43,6 +44,7 @@ struct InputConfig
     float gridCellSizeY;
 
     float timestep;
+    float sampleRate;
     float totalRuntime;
 
     int smokeGenLocationX;
@@ -152,8 +154,6 @@ int main()
         config.smokeGenValue,
         config.gridCellsX);
 
-    float *d_grids[2] = { d_gridA, d_gridB };
-    const char gridNames[2] = {'A', 'B'}; 
     int currentGrid = 0;
     float t = 0.0f;
 
@@ -184,8 +184,13 @@ int main()
             config.gridCellsX);
 
 
-        // print grid for debug purposes every 10th iteration
-        if ((int) t % 10 == 0 && (t - ((int) t)) <= 0.1f)
+        // print grid for debug purposes every sampleRate seconds
+        float tempT = t;
+        while (tempT > 0.0f)
+            tempT -= config.sampleRate;
+        tempT += config.sampleRate; // correction for extra iteration
+
+        if (tempT < 0.1f) // crude equality check
         {
             HANDLE_ERROR(hipMemcpy(cpuGrid.data(), frontGrid,
                                    gridBufferSize * sizeof(float), hipMemcpyDeviceToHost));
@@ -201,7 +206,8 @@ int main()
                     outputImg(i, config.gridCellsY - j - 1, 0, 0) = intIntensity;
                 }
             }
-            std::cout << "t=" << t + config.timestep << std::endl;
+            std::cout << "t=" << t << std::endl;
+            std::cout << "sampleRate=" << config.sampleRate << std::endl;
 
             // debug visualization
             outputImgDisp.assign(outputImg, "out");
@@ -378,7 +384,6 @@ const InputConfig GetInputConfig(const std::string& inputFilename)
             }
         }
 
-        // parse keys in a dreadful if/else chain
         if (key == KEY_GRID_CELLS)
         {
             config.gridCellsX = std::stoi(value0);
@@ -392,6 +397,10 @@ const InputConfig GetInputConfig(const std::string& inputFilename)
         else if (key == KEY_TIMESTEP)
         {
             config.timestep = std::stof(value0);
+        }
+        else if (key == KEY_SAMPLE_RATE)
+        {
+            config.sampleRate = std::stof(value0);
         }
         else if (key == KEY_RUNTIME)
         {
@@ -415,18 +424,16 @@ const InputConfig GetInputConfig(const std::string& inputFilename)
             config.eddyDiffusivityX = std::stof(value0);
             config.eddyDiffusivityY = std::stof(value1);
         }
-        // else continue
     }
 
     return config;
 }
 
-// shout out to StackOverflow
 // https://stackoverflow.com/questions/9435385/split-a-string-using-c11
 const std::vector<std::string> WhitespaceTokenizer(const std::string& line)
 {
     std::regex re("\\s+");
     std::sregex_token_iterator first {line.begin(), line.end(), re, -1};
     std::sregex_token_iterator last;
-    return {first, last}; // this is really neat
+    return {first, last};
 }
