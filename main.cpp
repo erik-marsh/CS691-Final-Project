@@ -89,7 +89,7 @@ __global__ void ApplySmokeGenerator(float *grid, const int x, const int y, const
 __global__ void IterateSimulation(float *destGrid, float *srcGrid, const int gridDimX, const int gridDimY,
                                   const float advectionCoeff, const float eddyCoeffX, const float eddyCoeffY);
 __global__ void IterateSimulationBoundary(float *destGrid, float *srcGrid, const int gridDimX, const int gridDimY,
-                                          const float advectionCoeff, const float eddyCoeffX, const float eddyCoeffY);
+                                          const float advectionAndEddyXCoeff, const float eddyCoeffY);
 
 
 int main()
@@ -106,6 +106,9 @@ int main()
     const float eddyCoefficientX = 
         (config.eddyDiffusivityX * config.timestep) / 
         (config.gridCellSizeX * config.gridCellSizeX);
+
+    // combining these two terms is slightly more efficient
+    const float advectionAndEddyXCoeff = advectionCoefficient + eddyCoefficientX;
     
     // and the coefficient of the "Y eddy term"
     const float eddyCoefficientY = 
@@ -169,8 +172,7 @@ int main()
             backGrid,
             config.gridCellsX,
             config.gridCellsY,
-            advectionCoefficient,
-            eddyCoefficientX,
+            advectionAndEddyXCoeff,
             eddyCoefficientY);
 
         // reapply "initial" condition
@@ -278,7 +280,7 @@ __global__ void IterateSimulation(float *destGrid, float *srcGrid, const int gri
 }
 
 __global__ void IterateSimulationBoundary(float *destGrid, float *srcGrid, const int gridDimX, const int gridDimY,
-                                          const float advectionCoeff, const float eddyCoeffX, const float eddyCoeffY)
+                                          const float advectionAndEddyXCoeff, const float eddyCoeffY)
 {
     int x = (blockIdx.x * blockDim.x) + threadIdx.x;
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
@@ -331,7 +333,7 @@ __global__ void IterateSimulationBoundary(float *destGrid, float *srcGrid, const
     float advectionStencil = cellValueRight - cellValueLeft;
     
     float rawValue = (cellValue) +
-        ((advectionCoeff + eddyCoeffX) * advectionStencil) + // Leelossy approx (combined 1st and 2nd terms)
+        (advectionAndEddyXCoeff * advectionStencil) + // Leelossy approx (combined 1st and 2nd terms)
         (eddyCoeffY * (cellValueAbove + cellValueBelow - (2 * cellValue))); // 2nd deriv. approx
 
     // negative concentration doesn't make much sense physically
