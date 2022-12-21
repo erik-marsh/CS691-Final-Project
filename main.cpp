@@ -301,25 +301,29 @@ __global__ void IterateSimulationBoundary(float *destGrid, float *srcGrid, const
 
     if (x == 0)
     {
+        cellValueLeft = cellValue;
         cellValueRight = srcGrid[cellIdxRight];
     }
     else if (x == gridDimX - 1)
     {
         cellValueLeft = srcGrid[cellIdxLeft];
+        cellValueRight = cellValue;
     }
     else
     {
-        cellValueRight = srcGrid[cellIdxRight];
         cellValueLeft = srcGrid[cellIdxLeft];
+        cellValueRight = srcGrid[cellIdxRight];
     }
     
     if (y == 0)
     {
+        cellValueBelow = cellValue;
         cellValueAbove = srcGrid[cellIdxAbove];
     }
     else if (y == gridDimY - 1)
     {
         cellValueBelow = srcGrid[cellIdxBelow];
+        cellValueAbove = cellValue;
     }
     else
     {
