@@ -17,7 +17,7 @@ constexpr int BLOCK_SIZE = 32;
 
 const std::string CONFIG_FILENAME = "input.conf";
 const std::string OUTPUT_DIR = "out/";
-const std::string LOG_FILE_NAME = "log.txt";
+const std::string LOG_FILE_NAME = "log.csv";
 
 constexpr char KEY_VALUE_DELIMITER = ':';
 constexpr char TUPLE_DELIMITER = ',';
@@ -161,6 +161,13 @@ int main()
     int currentGrid = 0;
     float t = 0.0f;
 
+    // events for timing
+    hipEvent_t start;
+    hipEvent_t stop;
+
+    HANDLE_ERROR(hipEventCreate(&start));
+    HANDLE_ERROR(hipEventCreate(&stop));
+
     while (t <= config.totalRuntime)
     {
         // front grid is the (n+1)th timestep
@@ -168,7 +175,9 @@ int main()
         float *frontGrid = currentGrid % 2 == 0 ? d_gridA : d_gridB;
         float *backGrid  = currentGrid % 2 == 0 ? d_gridB : d_gridA;
 
+
         // apply iteration of the function
+        HANDLE_ERROR(hipEventRecord(start, 0));
         IterateSimulation<<<grid2D, block2D>>>(
             frontGrid,
             backGrid,
@@ -176,19 +185,33 @@ int main()
             config.gridCellsY,
             advectionAndEddyXCoeff,
             eddyCoefficientY);
+        HANDLE_ERROR(hipEventRecord(stop, 0));
+        HANDLE_ERROR(hipEventSynchronize(stop));
+
+        float iterationTime;
+        HANDLE_ERROR(hipEventElapsedTime(&iterationTime, start, stop));
+
 
         // reapply "initial" condition
         // this is applied every cycle since we are modelling a point source of smoke
         // that is - our source has a constant concentration value in time
+        HANDLE_ERROR(hipEventRecord(start, 0));
         ApplySmokeGenerator<<<grid1D, block1D>>>(
             frontGrid,
             config.smokeGenLocationX,
             config.smokeGenLocationY,
             config.smokeGenValue,
             config.gridCellsX);
+        HANDLE_ERROR(hipEventRecord(stop, 0));
+        HANDLE_ERROR(hipEventSynchronize(stop));
+
+        float smokeRefreshTime;
+        HANDLE_ERROR(hipEventElapsedTime(&smokeRefreshTime, start, stop));
+
+        logfile << "t=" << t << ",simTime=" << iterationTime << ",refreshTime=" << smokeRefreshTime << std::endl;
 
 
-        // print grid for debug purposes every sampleRate seconds
+        // show the current grid every sampleRate seconds
         float tempT = t;
         while (tempT > 0.0f)
             tempT -= config.sampleRate;
@@ -210,8 +233,6 @@ int main()
                     outputImg(i, config.gridCellsY - j - 1, 0, 0) = intIntensity;
                 }
             }
-            std::cout << "t=" << t << "sampleRate=" << config.sampleRate << std::endl;
-            logfile << "t=" << t << "sampleRate=" << config.sampleRate << std::endl;
 
             // write image to file
             std::string imgFilename = OUTPUT_DIR;
@@ -234,6 +255,42 @@ int main()
 
         t += config.timestep;
     }
+
+
+    // finally, show and write the final state
+    // we want the backbuffer, since currentGrid got flipped one more time in the loop
+        float *lastGrid  = currentGrid % 2 == 0 ? d_gridB : d_gridA;
+            HANDLE_ERROR(hipMemcpy(cpuGrid.data(), lastGrid,
+                                   gridBufferSize * sizeof(float), hipMemcpyDeviceToHost));
+
+            for (int j = config.gridCellsY - 1; j >= 0; j--)
+            {
+                for (int i = 0; i < config.gridCellsX; i++)
+                {
+                    float colorIntensity = cpuGrid[(j * config.gridCellsX) + i] / static_cast<float>(config.smokeGenValue);
+                    if (colorIntensity > 1.0f)
+                        colorIntensity = 1.0f;
+                    uint8_t intIntensity = colorIntensity * 255;
+                    outputImg(i, config.gridCellsY - j - 1, 0, 0) = intIntensity;
+                }
+            }
+
+            // write image to file
+            std::string imgFilename = OUTPUT_DIR;
+            imgFilename += "t";
+            imgFilename += std::to_string(t);
+            imgFilename += ".bmp";
+            outputImg.save(imgFilename.c_str());
+
+            // show image on screen
+            std::string windowName = "t=";
+            windowName += std::to_string(t);
+
+            outputImgDisp.assign(outputImg, windowName.c_str());
+            while (!outputImgDisp.is_closed())
+            {
+                outputImgDisp.wait();
+            }
 
     return 0;
 }
