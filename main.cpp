@@ -189,28 +189,25 @@ int main()
         // print grid for debug purposes every 10th iteration
         if ((int) t % 10 == 0 && (t - ((int) t)) <= 0.1f)
         {
-        HANDLE_ERROR(hipMemcpy(cpuGrid.data(), frontGrid,
-                               gridBufferSize * sizeof(float), hipMemcpyDeviceToHost));
+            HANDLE_ERROR(hipMemcpy(cpuGrid.data(), frontGrid,
+                                   gridBufferSize * sizeof(float), hipMemcpyDeviceToHost));
 
-        for (int j = config.gridCellsY - 1; j >= 0; j--)
-        {
-            //std::cout << "[ ";
-            for (int i = 0; i < config.gridCellsX; i++)
+            for (int j = config.gridCellsY - 1; j >= 0; j--)
             {
-                //std::cout << cpuGrid[(j * config.gridCellsX) + i] << " ";
-                float colorIntensity = cpuGrid[(j * config.gridCellsX) + i] / static_cast<float>(config.smokeGenValue);
-                if (colorIntensity > 1.0f)
-                    colorIntensity = 1.0f;
-                uint16_t intIntensity = colorIntensity * 65535;
-                outputImg(i, config.gridCellsY - j - 1, 0, 0) = intIntensity;
+                for (int i = 0; i < config.gridCellsX; i++)
+                {
+                    float colorIntensity = cpuGrid[(j * config.gridCellsX) + i] / static_cast<float>(config.smokeGenValue);
+                    if (colorIntensity > 1.0f)
+                        colorIntensity = 1.0f;
+                    uint16_t intIntensity = colorIntensity * 65535;
+                    outputImg(i, config.gridCellsY - j - 1, 0, 0) = intIntensity;
+                }
             }
-            //std::cout << "]\n";
-        }
-        std::cout << "t=" << t + config.timestep << std::endl;
+            std::cout << "t=" << t + config.timestep << std::endl;
 
-        // debug visualization
-        outputImgDisp.assign(outputImg, "out");
-        outputImgDisp.wait(200);
+            // debug visualization
+            outputImgDisp.assign(outputImg, "out");
+            outputImgDisp.wait(200);
         }
 
         // swap buffers
