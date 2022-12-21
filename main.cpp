@@ -327,11 +327,11 @@ __global__ void IterateSimulationBoundary(float *destGrid, float *srcGrid, const
         cellValueBelow = srcGrid[cellIdxBelow];
         cellValueAbove = srcGrid[cellIdxAbove];
     }
+
+    float advectionStencil = cellValueRight - cellValueLeft;
     
     float rawValue = (cellValue) +
-        (advectionCoeff * (cellValueRight - cellValueLeft)) +               // Leelossy approx
-        (eddyCoeffX * (cellValueRight - cellValueLeft)) +                   // Leelossy approx
-        //(eddyCoeffX * (cellValueRight + cellValueLeft - (2 * cellValue))) + // 2nd deriv. approx
+        ((advectionCoeff + eddyCoeffX) * advectionStencil) + // Leelossy approx (combined 1st and 2nd terms)
         (eddyCoeffY * (cellValueAbove + cellValueBelow - (2 * cellValue))); // 2nd deriv. approx
 
     // negative concentration doesn't make much sense physically
