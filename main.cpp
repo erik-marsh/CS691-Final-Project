@@ -76,9 +76,9 @@ void HandleError(const hipError_t err, const char *file, const int line)
 
 
 ///////////////////////////////////////////////////////////////////////////////
-// Helper function declarations
+// Input parsing function declarations
 ///////////////////////////////////////////////////////////////////////////////
-//
+
 const InputConfig GetInputConfig(const std::string& inputFilename);
 const std::vector<std::string> WhitespaceTokenizer(const std::string& line);
 
@@ -88,17 +88,20 @@ const std::vector<std::string> WhitespaceTokenizer(const std::string& line);
 ///////////////////////////////////////////////////////////////////////////////
 
 __global__ void CopyGrid(float *destGrid, float *srcGrid, const int bufferSize);
-__global__ void Initialize(float *grid, const int bufferSize, const float value);
 __global__ void ApplySmokeGenerator(float *grid, const int x, const int y, const float generatorValue, const int gridWidth);
 __global__ void IterateSimulation(float *destGrid, float *srcGrid, const int gridDimX, const int gridDimY,
                                           const float advectionAndEddyXCoeff, const float eddyCoeffY);
 
 
+///////////////////////////////////////////////////////////////////////////////
+// Main function/driver
+///////////////////////////////////////////////////////////////////////////////
+
 int main()
 {
     std::ofstream logfile(OUTPUT_DIR + LOG_FILE_NAME);
-
     InputConfig config = GetInputConfig(CONFIG_FILENAME);
+
 
     // there are a few coefficients that can be caluclated ahead of time
     // the coefficient of the "advection term"
@@ -120,7 +123,7 @@ int main()
         (config.gridCellSizeY * config.gridCellSizeY);
 
     const int gridBufferSize = config.gridCellsX * config.gridCellsY;
-    std::cout << "Using gridBufferSize of " << gridBufferSize << "\n";
+
 
     // generate CPU buffers (for output purposes)
     std::vector<float> cpuGrid(gridBufferSize, 0.0f);
@@ -145,9 +148,6 @@ int main()
                 (config.gridCellsY + (block2D.y - 1)) / block2D.y,
                 1);
    
-    //Initialize<<<grid1D, block1D>>>(d_gridA, gridBufferSize, 100.0f);
-    //Initialize<<<grid1D, block1D>>>(d_gridB, gridBufferSize, 100.0f);
-
     // apply initial condiiton
     // B will be the backbuffer in the first iteration of the loop,
     // which is the buffer that we are pulling values from to caluclate the new (front) buffer
@@ -167,6 +167,10 @@ int main()
 
     HANDLE_ERROR(hipEventCreate(&start));
     HANDLE_ERROR(hipEventCreate(&stop));
+
+    float runningIterationTime = 0.0f;
+    float runningRefreshTime = 0.0f;
+    int numIters = 0;
 
     while (t <= config.totalRuntime)
     {
@@ -217,7 +221,7 @@ int main()
             tempT -= config.sampleRate;
         tempT += config.sampleRate; // correction for extra iteration
 
-        if (tempT < 0.1f) // crude equality check
+        if (tempT < 0.1f) // crude == 0 check
         {
             HANDLE_ERROR(hipMemcpy(cpuGrid.data(), frontGrid,
                                    gridBufferSize * sizeof(float), hipMemcpyDeviceToHost));
@@ -254,46 +258,60 @@ int main()
         currentGrid = (currentGrid + 1) % 2;
 
         t += config.timestep;
+        numIters++;
+        runningIterationTime += iterationTime;
+        runningRefreshTime += smokeRefreshTime;
     }
 
 
     // finally, show and write the final state
     // we want the backbuffer, since currentGrid got flipped one more time in the loop
-        float *lastGrid  = currentGrid % 2 == 0 ? d_gridB : d_gridA;
-            HANDLE_ERROR(hipMemcpy(cpuGrid.data(), lastGrid,
-                                   gridBufferSize * sizeof(float), hipMemcpyDeviceToHost));
+    float *lastGrid  = currentGrid % 2 == 0 ? d_gridB : d_gridA;
+    HANDLE_ERROR(hipMemcpy(cpuGrid.data(), lastGrid,
+                           gridBufferSize * sizeof(float), hipMemcpyDeviceToHost));
 
-            for (int j = config.gridCellsY - 1; j >= 0; j--)
-            {
-                for (int i = 0; i < config.gridCellsX; i++)
-                {
-                    float colorIntensity = cpuGrid[(j * config.gridCellsX) + i] / static_cast<float>(config.smokeGenValue);
-                    if (colorIntensity > 1.0f)
-                        colorIntensity = 1.0f;
-                    uint8_t intIntensity = colorIntensity * 255;
-                    outputImg(i, config.gridCellsY - j - 1, 0, 0) = intIntensity;
-                }
-            }
+    for (int j = config.gridCellsY - 1; j >= 0; j--)
+    {
+        for (int i = 0; i < config.gridCellsX; i++)
+        {
+            float colorIntensity = cpuGrid[(j * config.gridCellsX) + i] / static_cast<float>(config.smokeGenValue);
+            if (colorIntensity > 1.0f)
+                colorIntensity = 1.0f;
+            uint8_t intIntensity = colorIntensity * 255;
+            outputImg(i, config.gridCellsY - j - 1, 0, 0) = intIntensity;
+        }
+    }
 
-            // write image to file
-            std::string imgFilename = OUTPUT_DIR;
-            imgFilename += "t";
-            imgFilename += std::to_string(t);
-            imgFilename += ".bmp";
-            outputImg.save(imgFilename.c_str());
 
-            // show image on screen
-            std::string windowName = "t=";
-            windowName += std::to_string(t);
+    // print some statistics
+    std::cout << "Done.\n";
+    std::cout << "Total time taken by simulation iterations: " << runningIterationTime << "ms\n";
+    std::cout << "Average iteration time: " << runningIterationTime / numIters << "ms\n";
+    std::cout << "Total time taken by initial condition refresh: " << runningRefreshTime << "ms\n";
+    std::cout << "Average refresh time: " << runningRefreshTime / numIters << "ms" << std::endl;
 
-            outputImgDisp.assign(outputImg, windowName.c_str());
-            while (!outputImgDisp.is_closed())
-            {
-                outputImgDisp.wait();
-            }
+    // write image to file
+    std::string imgFilename = OUTPUT_DIR;
+    imgFilename += "t";
+    imgFilename += std::to_string(t);
+    imgFilename += ".bmp";
+    outputImg.save(imgFilename.c_str());
+
+    // show image on screen
+    std::string windowName = "t=";
+    windowName += std::to_string(t);
+
+    outputImgDisp.assign(outputImg, windowName.c_str());
+    while (!outputImgDisp.is_closed())
+        outputImgDisp.wait();
 
     return 0;
 }
+
+
+///////////////////////////////////////////////////////////////////////////////
+// Kernel implementations
+///////////////////////////////////////////////////////////////////////////////
 
 // 1D operation
 __global__ void CopyGrid(float *destGrid, float *srcGrid, const int bufferSize)
@@ -304,15 +322,6 @@ __global__ void CopyGrid(float *destGrid, float *srcGrid, const int bufferSize)
     {
         destGrid[tid] = srcGrid[tid];
     }
-}
-
-__global__ void Initialize(float *grid, const int bufferSize, const float value)
-{
-    int tid = (blockIdx.x * blockDim.x) + threadIdx.x;
-
-    if (tid >= bufferSize) return;
-
-    grid[tid] = value;
 }
 
 // note that our gridding scheme is
@@ -397,6 +406,9 @@ __global__ void ApplySmokeGenerator(float *grid, const int x, const int y, const
 }
 
 
+///////////////////////////////////////////////////////////////////////////////
+// Input parsing function implementations 
+///////////////////////////////////////////////////////////////////////////////
 
 // simple, non-generalizable parser
 const InputConfig GetInputConfig(const std::string& inputFilename)
@@ -437,21 +449,16 @@ const InputConfig GetInputConfig(const std::string& inputFilename)
 
             key = {tokens[0].begin(), tokens[0].end() - 1}; // truncate the :
 
-            std::cout << "[key detected]: " << key << std::endl;
             if (*(tokens[1].end() - 1) == TUPLE_DELIMITER)
             {
                 if (tokens.size() < 3) continue;
 
                 value0 = {tokens[1].begin(), tokens[1].end() - 1};
                 value1 = tokens[2];
-
-                std::cout << "[first value must be]: " << value0 << std::endl;
-                std::cout << "[found second value]: " << value1 << std::endl;
             }
             else
             {
                 value0 = tokens[1];
-                std::cout << "[first value must be]: " << value0 << std::endl;
             }
         }
 
